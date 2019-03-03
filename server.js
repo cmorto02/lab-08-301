@@ -41,6 +41,10 @@ app.get('/yelp', getYelp);
 // Movie DB route
 app.get('/movies', getMovies);
 
+// Trails Route
+app.get('/trails', getTrails);
+
+
 
 // Make sure the server is listening for requests
 app.listen(PORT, () => console.log(`Listening on ${PORT}`));
@@ -88,6 +92,19 @@ function Movie(movie) {
   this.overview = movie.overview;
 }
 
+function Trail(response) {
+  this.trail_url = response.url;
+  this.name = response.name;
+  this.location = response.location;
+  this.length = response.length;
+  this.condition_date = new Date(response.conditionDate).toString().slice(0,10);
+  this.condition_time = new Date(response.conditionDate).getHours() + ':' + new Date(response.conditionDate).getMinutes();
+  this.conditions = response.conditionDetails;
+  this.stars = response.stars;
+  this.star_votes = response.starVotes;
+  this.summary = response.summary;
+}
+
 // *********************
 // HELPER FUNCTIONS
 // *********************
@@ -98,46 +115,29 @@ function handleError(err, res) {
 }
 
 function getLocation(query) {
-  // CREATE the query string to check for the existence of the location
   const SQL = `SELECT * FROM locations WHERE search_query=$1;`;
   const values = [query];
 
-  // Make the query of the database
   return client.query(SQL, values)
     .then(result => {
-      // Check to see if the location was found and return the results
       if (result.rowCount > 0) {
-        console.log('From SQL');
         return result.rows[0];
 
-        // Otherwise get the location information from the Google API
       } else {
         const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${query}&key=${process.env.GEOCODE_API_KEY}`;
 
         return superagent.get(url)
           .then(data => {
-            console.log('FROM API line 90');
-            // Throw an error if there is a problem with the API request
             if (!data.body.results.length) { throw 'no Data' }
 
-            // Otherwise create an instance of Location
             else {
               let location = new Location(query, data.body.results[0]);
-              console.log('98', location);
 
-              // Create a query string to INSERT a new record with the location data
               let newSQL = `INSERT INTO locations (search_query, formatted_query, latitude, longitude) VALUES ($1, $2, $3, $4) RETURNING id;`;
-              console.log('102', newSQL)
               let newValues = Object.values(location);
-              console.log('104', newValues)
 
-              // Add the record to the database
               return client.query(newSQL, newValues)
                 .then(result => {
-                  console.log('108', result.rows);
-                  // Attach the id of the newly created record to the instance of location.
-                  // This will be used to connect the location to the other databases.
-                  console.log('114', result.rows[0].id)
                   location.id = result.rows[0].id;
                   return location;
                 })
@@ -207,7 +207,6 @@ function getMeetups(request, response) {
               newValues.push(request.query.data.id);
               return client.query(newSQL, newValues)
                 .then(result=> {
-                  console.log('190', result.rows);
                 })
                 .catch(console.error);
             })
@@ -239,7 +238,6 @@ function getYelp(request, response) {
               newValues.push(request.query.data.id);
               return client.query(newSQL, newValues)
                 .then(result => {
-                  //?
                 })
                 .catch(error => handleError(error, response));
             })
@@ -270,11 +268,41 @@ function getMovies(request, response) {
               newValues.push(request.query.data.id);
               return client.query(newSQL, newValues)
                 .then(result => {
-                  //?
                 })
                 .catch(error => handleError(error, response));
             })
             response.send(movies);
+          })
+          .catch(error => handleError(error, response));
+      }
+    })
+}
+
+function getTrails(request, response) {
+  const SQL = `SELECT * FROM trails WHERE location_id=$1;`;
+  const values = [request.query.data.id];
+
+  return client.query(SQL, values)
+    .then(result => {
+      if (result.rowCount > 0) {
+        response.send(result.rows);
+      } else {
+        const url = `https://www.hikingproject.com/data/get-trails?lat=${request.query.data.latitude}&lon=${request.query.data.longitude}&maxDistance=10&key=${process.env.TRAILS_API_KEY}`;
+        superagent.get(url)
+          .then(result => {
+            const trails = result.body.trails.map(trail => {
+              return new Trail(trail)
+            });
+            let newSQL = `INSERT INTO trails(trail_url, name, location, length, condition_date, condition_time, conditions, stars, star_votes, summary, location_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11);`;
+            trails.forEach(trail => {
+              let newValues = Object.values(trail);
+              newValues.push(request.query.data.id);
+              return client.query(newSQL, newValues)
+                .then(result => {
+                })
+                .catch(error => handleError(error, response));
+            })
+            response.send(trails);
           })
           .catch(error => handleError(error, response));
       }
